@@ -1,5 +1,8 @@
+// app/layout.js
 import { Geist, Geist_Mono } from "next/font/google";
+// import Navbar from "./Components/Navbar"; // No longer directly imported here
 import "./globals.css";
+import LayoutClientWrapper from "./Components/LayoutClientWrapper"; // Import the new wrapper
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -22,7 +25,10 @@ export default function RootLayout({ children }) {
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        {/* Wrap children with the client-side wrapper */}
+        <LayoutClientWrapper>
+          {children}
+        </LayoutClientWrapper>
       </body>
     </html>
   );
