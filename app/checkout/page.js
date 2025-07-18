@@ -33,6 +33,22 @@ export default function CheckoutPage() {
     const [showConfirmationModal, setShowConfirmationModal] = useState(false);
     const [orderPlacedOrderId, setOrderPlacedOrderId] = useState(null); // To store the actual order ID
 
+    // Razorpay Key ID - **Replace with your actual Key ID from Razorpay Dashboard**
+    const RAZORPAY_KEY_ID = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
+
+    // Load Razorpay script dynamically
+    useEffect(() => {
+        const script = document.createElement('script');
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+        script.async = true;
+        document.body.appendChild(script);
+
+        return () => {
+            document.body.removeChild(script);
+        };
+    }, []);
+
+
     // Memoize fetchCartItems to prevent unnecessary re-creations
     const fetchCartItems = useCallback(async (mobileNumber) => {
         setLoading(true);
@@ -83,7 +99,10 @@ export default function CheckoutPage() {
     }, [fetchCartItems]); // Dependency array includes fetchCartItems
 
     // Calculate total price from actual cart items
+    // Razorpay expects amount in paisa (1 INR = 100 paisa)
     const totalPrice = cartItems.reduce((sum, item) => sum + (item.productPrice * item.quantity), 0);
+    const amountInPaisa = totalPrice * 100;
+
 
     // Handle input changes for shipping details
     const handleInputChange = (e) => {
@@ -93,6 +112,76 @@ export default function CheckoutPage() {
             [name]: value,
         }));
     };
+
+    // Function to initiate Razorpay payment
+    const initiateRazorpayPayment = useCallback(async (orderData) => {
+        const options = {
+            key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+            amount: orderData.amount, // Amount in paisa
+            currency: orderData.currency,
+            name: "ElectraHub", // Your company name
+            description: "By Vaibhav Khapra",
+            order_id: orderData.id, // Order ID from your backend Razorpay order creation
+            handler: async function (response) {
+                // This function is called after successful payment
+                setIsProcessingOrder(true);
+                try {
+                    // Verify payment signature on your backend
+                    const verificationResponse = await fetch('/api/verify-payment', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            razorpay_order_id: response.razorpay_order_id,
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_signature: response.razorpay_signature,
+                            // Pass other necessary data to your order placement API
+                            userId: userProfile.mobileNumber,
+                            cartItems: cartItems,
+                            shippingDetails: shippingDetails,
+                            totalPrice: totalPrice,
+                        }),
+                    });
+
+                    if (!verificationResponse.ok) {
+                        const errorData = await verificationResponse.json();
+                        throw new Error(errorData.message || 'Payment verification failed.');
+                    }
+
+                    const verificationResult = await verificationResponse.json();
+
+                    if (verificationResult.success) {
+                        setOrderPlaced(true);
+                        setOrderPlacedOrderId(verificationResult.orderId); // Get your internal order ID
+                        setShowConfirmationModal(true);
+                        setCartItems([]); // Clear cart items locally
+                    } else {
+                        setOrderError(verificationResult.message || 'Payment verification failed.');
+                        setShowConfirmationModal(true);
+                    }
+                } catch (error) {
+                    console.error("Error verifying payment:", error);
+                    setOrderError(error.message || 'An error occurred during payment verification.');
+                    setShowConfirmationModal(true);
+                } finally {
+                    setIsProcessingOrder(false);
+                }
+            },
+            prefill: {
+                name: shippingDetails.fullName,
+                email: userProfile?.email || '', // Assuming email is part of userProfile
+                contact: shippingDetails.mobileNumber,
+            },
+            notes: {
+                address: `${shippingDetails.addressLine1}, ${shippingDetails.city}, ${shippingDetails.state} - ${shippingDetails.zipCode}`,
+            },
+            theme: {
+                color: "#4F46E5" // Indigo color
+            }
+        };
+
+        const paymentObject = new window.Razorpay(options);
+        paymentObject.open();
+    }, [RAZORPAY_KEY_ID, userProfile, cartItems, shippingDetails, totalPrice]); // Add all dependencies
 
     // Handle form submission (Place Order)
     const handleSubmit = async (e) => {
@@ -114,37 +203,29 @@ export default function CheckoutPage() {
         setOrderError(null);
 
         try {
-            // Call the real API route for placing an order (POST to /api/orders)
-            const response = await fetch('/api/orders', {
+            // Step 1: Create a Razorpay order on your backend
+            const response = await fetch('/api/create-razorpay-order', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    userId: userProfile.mobileNumber,
-                    cartItems: cartItems, // Send the actual cart items fetched from /api/cart
-                    shippingDetails: shippingDetails,
-                    totalPrice: totalPrice,
+                    amount: amountInPaisa,
+                    currency: 'INR',
+                    receipt: userProfile.mobileNumber + '_' + Date.now(), // Unique receipt ID
                 }),
             });
 
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+                throw new Error(errorData.message || `Failed to create Razorpay order: ${response.status}`);
             }
 
-            const data = await response.json(); // Get actual order confirmation from your API
+            const razorpayOrder = await response.json();
 
-            if (data.orderId) { // Check for orderId from your API response
-                setOrderPlaced(true);
-                setOrderPlacedOrderId(data.orderId); // Store the actual order ID
-                setShowConfirmationModal(true);
-                setCartItems([]); // Clear cart items locally after successful order
-            } else {
-                setOrderError('Failed to place order. No order ID received from API.');
-                setShowConfirmationModal(true);
-            }
+            // Step 2: Initiate Razorpay payment with the order details
+            await initiateRazorpayPayment(razorpayOrder);
+
         } catch (error) {
-            console.error("Error placing order:", error);
-            // Display the error message from the backend if available, otherwise a generic one
+            console.error("Error during order creation or payment initiation:", error);
             setOrderError(error.message || 'An unexpected error occurred. Please try again.');
             setShowConfirmationModal(true);
         } finally {
@@ -382,10 +463,10 @@ export default function CheckoutPage() {
                                 {isProcessingOrder ? (
                                     <>
                                         <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white mr-3"></div>
-                                        Processing Order...
+                                        Processing Payment...
                                     </>
                                 ) : (
-                                    'Place Order'
+                                    'Pay with Razorpay'
                                 )}
                             </button>
                         </form>
@@ -419,21 +500,21 @@ export default function CheckoutPage() {
                         </div>
                     </div>
                 </div>
-            </div>
 
-            {/* Confirmation Modal */}
-            {showConfirmationModal && (
-                <ConfirmationModal
-                    message={orderPlaced ? `Your order has been placed successfully! Order ID: ${orderPlacedOrderId}` : orderError}
-                    type={orderPlaced ? 'success' : 'error'}
-                    onClose={() => {
-                        setShowConfirmationModal(false);
-                        if (orderPlaced) {
-                            router.push('/products'); // Redirect to products page after successful order
-                        }
-                    }}
-                />
-            )}
+                {/* Confirmation Modal */}
+                {showConfirmationModal && (
+                    <ConfirmationModal
+                        message={orderPlaced ? `Your order has been placed successfully! Order ID: ${orderPlacedOrderId}` : orderError}
+                        type={orderPlaced ? 'success' : 'error'}
+                        onClose={() => {
+                            setShowConfirmationModal(false);
+                            if (orderPlaced) {
+                                router.push('/products'); // Redirect to products page after successful order
+                            }
+                        }}
+                    />
+                )}
+            </div>
         </div>
     );
 }

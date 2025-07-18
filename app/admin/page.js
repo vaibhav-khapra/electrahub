@@ -10,8 +10,8 @@ const App = () => {
     const [message, setMessage] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    const ADMIN_ID = process.env.NEXT_PUBLIC_admin_id;
-    const ADMIN_PASS = process.env.NEXT_PUBLIC_admin_pass;
+    const ADMIN_ID = "vaibhavkhapra@gmail.com";
+    const ADMIN_PASS = "Va@110105";
 
     const onSubmit = async (data) => {
         setIsLoading(true);

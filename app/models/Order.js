@@ -30,6 +30,16 @@ const shippingDetailsSchema = new mongoose.Schema({
     mobileNumber: { type: String, required: true, trim: true },
 });
 
+// Schema for payment details (Razorpay specifics)
+const paymentDetailsSchema = new mongoose.Schema({
+    razorpayOrderId: { type: String, required: true },
+    razorpayPaymentId: { type: String, required: true },
+    razorpaySignature: { type: String, required: true },
+    method: { type: String, default: 'Razorpay' },
+    // You can add more fields if needed, like currency, amount paid, etc.
+    // although totalPrice already covers amount.
+});
+
 // Main Order Schema
 const orderSchema = new mongoose.Schema({
     userId: {
@@ -70,10 +80,13 @@ const orderSchema = new mongoose.Schema({
     status: {
         type: String,
         required: true,
-        enum: ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'], // Possible statuses
+        enum: ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled', 'Paid'], // Added 'Paid' status
         default: 'Pending'
     },
-    // You might add payment details, transaction IDs, etc. here
+    paymentDetails: { // New field for payment gateway details
+        type: paymentDetailsSchema,
+        required: false // It might not be required for all order types (e.g., COD), but for Razorpay it will be present.
+    }
 }, {
     timestamps: true, // Adds createdAt and updatedAt timestamps automatically
     collection: 'orders' // Explicitly set collection name
